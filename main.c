@@ -170,9 +170,6 @@ int app_proc( app_t* app, void* user_data )
 		sprintf(fps_str, "%02.2fms", 1000.0f * delta_time);
 		xui_draw_string(&gfx, 20, 20, 0xffffffff, fps_str);
 
-		sprintf(fps_str, "%d,%d", xui->mouse_x, xui->mouse_y);
-		xui_draw_string(&gfx, 20, 50, 0xffffffff, fps_str);
-
 		// display the canvas
 		app_present( app, gfx.pixels, gfx.width, gfx.height, 0xffffff, 0x000000 );
 	}
