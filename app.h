@@ -15,7 +15,7 @@
 #define app_h
 
 #if !defined(APP_WINDOWS) && !defined(APP_MACOS) && !defined(APP_NULL)
-#if defined WIN32
+#if defined _WIN32
 #define APP_WINDOWS
 #elif defined __APPLE__
 #define APP_MACOS
