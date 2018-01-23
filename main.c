@@ -189,8 +189,9 @@ int main(int argc, char *argv[])
 	// tmp - require a mod file on the command line
 	if(argc != 2)
 	{
-//		printf("Usage: WolfTracker <modfile.mod>\n");
+//		printf("Usage: RailTracker <modfile.mod>\n");
 //		exit(0);
+		// tmp - load a default mod
         modfile = "spacedeb.mod";
 	}
     else
@@ -206,5 +207,7 @@ int main(int argc, char *argv[])
 	return app_run( app_proc, modplayer, NULL, NULL, NULL );
 }
 
+#ifdef _WIN32
 //extern "C" int __stdcall WinMain( struct HINSTANCE__*, struct HINSTANCE__*, char*, int ) { return main( __argc, __argv ); }
-//int __stdcall WinMain( struct HINSTANCE__* hInstance, struct HINSTANCE__* hPrevInstance, LPSTR argv, int argc) { return main( __argc, __argv ); }
+int __stdcall WinMain( struct HINSTANCE__* hInstance, struct HINSTANCE__* hPrevInstance, LPSTR argv, int argc) { return main( __argc, __argv ); }
+#endif
