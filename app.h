@@ -2804,6 +2804,11 @@ void app_coordinates_bitmap_to_window( app_t* app, int width, int height, int* x
 #include <AudioUnit/AudioUnit.h>
 #include <stdbool.h>
 #include <sys/time.h>
+#include <mach/mach_time.h>
+
+#include <objc/message.h>
+#include <objc/runtime.h>
+#include <CoreGraphics/CGGeometry.h>
 
 #ifndef APP_MALLOC
 #include <stdlib.h>
@@ -2839,60 +2844,58 @@ MessageBoxA( 0, message, "Fatal Error!", MB_OK | MB_ICONSTOP ); _flushall(); _ex
  */
 #endif
 
-typedef struct AppWindow AppWindow;
+typedef id(*ObjcIdMessage)(id, SEL);
+typedef void(*ObjcVoidMessage)(id, SEL);
+typedef void(*ObjcVoidMessageId)(id, SEL, id);
+typedef void(*ObjcVoidMessageBool)(id, SEL, bool);
+typedef void(*ObjcVoidMessageInt)(id, SEL, int);
+typedef void(*ObjcVoidMessagePoint)(id, SEL, CGPoint);
+typedef void(*ObjcVoidMessageSize)(id, SEL, CGSize);
+typedef void(*ObjcVoidMessageRect)(id, SEL, CGRect);
+typedef void(*ObjcVoidMessageRectBool)(id, SEL, CGRect, bool);
+typedef void(*ObjcVoidMessageVoidStarInt)(id, SEL, void*, int);
+typedef bool(*ObjcBoolMessage)(id, SEL);
+typedef int(*ObjcIntMessage)(id, SEL);
+typedef double(*ObjcDoubleMessage)(id, SEL);
+typedef const char*(*ObjcCharStarMessage)(id, SEL);
+typedef CGPoint(*ObjcPointMessage)(id, SEL);
+typedef CGPoint(*ObjcPointMessagePointId)(id, SEL, CGPoint, id);
+typedef CGRect(*ObjcRectMessage)(id, SEL);
+typedef id(*ObjcIdMessageInt)(id, SEL, int);
+typedef id(*ObjcIdMessageRect)(id, SEL, CGRect);
+typedef id(*ObjcIdMessageId)(id, SEL, id);
+typedef id(*ObjcIdMessageVoidStar)(id, SEL, void*);
+typedef id(*ObjcNextEventMessage)(id, SEL, unsigned long long, id, id, bool);
+typedef id(*ObjcWindowInitMessage)(id, SEL, CGRect, int, int, bool);
+typedef id(*ObjcViewInitMessage)(id, SEL, CGRect, id);
+typedef id(*ObjcMenuItemInitMessage)(id, SEL, id, SEL, id);
 
-// defined in app_osx.m
-extern AppWindow* app_internal_osx_view_init(app_t* app, int width, int height);
-extern bool app_internal_osx_should_terminate(void);
-extern void app_internal_osx_cancel_terminate(void);
-extern void app_internal_osx_present(AppWindow* app_window);
-extern void app_internal_osx_handle_events(AppWindow* app_window);
-
-extern int app_internal_osx_get_screen_count(void);
-extern void app_internal_osx_get_screen_rect(int screen_idx, int* x, int* y, int* w, int* h);
-extern void app_internal_osx_get_window_position(AppWindow* app_window, int* x, int* y);
-extern void app_internal_osx_get_window_content_size(AppWindow* app_window, int* w, int* h);
-extern void app_internal_osx_set_window_position(AppWindow* app_window, int x, int y);
-extern void app_internal_osx_set_window_content_size(AppWindow* app_window, int w, int h);
-extern void app_internal_osx_set_window_title(AppWindow* app_window, const char* title);
-extern void app_internal_osx_set_fullscreen(AppWindow* app_window, bool fullscreen);
-extern void app_internal_osx_show_window(AppWindow* app_window);
-
-struct app_t
-{
-    void* memctx;
-    void* logctx;
-    void* fatalctx;
-    app_interpolation_t interpolation;
-    app_screenmode_t screenmode;
-    
-    bool initialized;
-    bool closed;
-    bool has_focus;
-    bool is_minimized;
-
-    AppWindow* window;
-    int display_count;
-    app_display_t displays[ 16 ];
-    
-    struct app_internal_opengl_t gl;
-    
-    app_input_event_t input_events[ 1024 ];
-    int input_count;
-    
-    int windowed_x;
-    int windowed_y;
-    int windowed_h;
-    int windowed_w;
-    int fullscreen_width;
-    int fullscreen_height;
-    
-    AudioComponentInstance audioUnit;
-    APP_S16* audio_buffer;
-    int audio_buffer_size;
-    int audio_buffer_position;
-    float sound_vol;
-};
+ObjcIdMessage objc_id_msgSend = (ObjcIdMessage)objc_msgSend;
+ObjcVoidMessage objc_void_msgSend     = (ObjcVoidMessage)objc_msgSend;
+ObjcVoidMessageId objc_void_msgSend_id = (ObjcVoidMessageId)objc_msgSend;
+ObjcVoidMessageBool objc_void_msgSend_bool = (ObjcVoidMessageBool)objc_msgSend;
+ObjcVoidMessageInt objc_void_msgSend_int = (ObjcVoidMessageInt)objc_msgSend;
+ObjcVoidMessagePoint objc_void_msgSend_point = (ObjcVoidMessagePoint)objc_msgSend;
+ObjcVoidMessageSize objc_void_msgSend_size = (ObjcVoidMessageSize)objc_msgSend;
+ObjcVoidMessageRect objc_void_msgSend_rect = (ObjcVoidMessageRect)objc_msgSend;
+ObjcVoidMessageRectBool objc_void_msgSend_rect_bool = (ObjcVoidMessageRectBool)objc_msgSend;
+ObjcVoidMessageVoidStarInt objc_void_msgSend_voidstar_int = (ObjcVoidMessageVoidStarInt)objc_msgSend;
+ObjcBoolMessage objc_bool_msgSend = (ObjcBoolMessage)objc_msgSend;
+ObjcDoubleMessage objc_double_msgSend = (ObjcDoubleMessage)objc_msgSend_fpret;
+ObjcIntMessage objc_int_msgSend = (ObjcIntMessage)objc_msgSend;
+ObjcCharStarMessage objc_charstar_msgSend = (ObjcCharStarMessage)objc_msgSend;
+// note this uses objc_msgSend, not objc_msgSend_stret. It seems a CGPoint is small enough to pass in registers, but this is dependant on the architecture, so we may need to revisit this if not compmiling for x64.
+ObjcPointMessage objc_point_msgSend = (ObjcPointMessage)objc_msgSend;
+ObjcPointMessagePointId objc_point_msgSend_point_id = (ObjcPointMessagePointId)objc_msgSend;
+ObjcRectMessage objc_rect_msgSend = (ObjcRectMessage)objc_msgSend_stret;
+ObjcIdMessageInt objc_id_msgSend_int = (ObjcIdMessageInt)objc_msgSend;
+ObjcIdMessageRect objc_id_msgSend_rect = (ObjcIdMessageRect)objc_msgSend;
+ObjcIdMessageId objc_id_msgSend_id = (ObjcIdMessageId)objc_msgSend;
+ObjcIdMessageVoidStar objc_id_msgSend_voidstar = (ObjcIdMessageVoidStar)objc_msgSend;
+ObjcNextEventMessage objc_next_event_msgSend = (ObjcNextEventMessage)objc_msgSend;
+ObjcWindowInitMessage objc_window_init_msgSend = (ObjcWindowInitMessage)objc_msgSend;
+ObjcViewInitMessage objc_view_init_msgSend = (ObjcViewInitMessage)objc_msgSend;
+ObjcMenuItemInitMessage objc_menuitem_init_msgSend = (ObjcMenuItemInitMessage)objc_msgSend;
 
 // OSX keycodes for keys that are independent of keyboard layout
 enum {
@@ -2945,95 +2948,154 @@ enum {
     OSX_KEY_UpArrow                   = 0x7E
 };
 
-OSStatus app_internal_osx_audio_output_cb(
-                    void *inRefCon,
-                    AudioUnitRenderActionFlags     *ioActionFlags,
-                    const AudioTimeStamp         *inTimeStamp,
-                    UInt32                         inBusNumber,
-                    UInt32                         inNumberFrames,
-                    AudioBufferList             *ioData)
+enum OSXWindowStyleMask
 {
-    app_t* app = (app_t*) inRefCon;
-    if(app->audio_buffer == NULL)
-        return noErr;
-    
-    short* inbuf = (short*)app->audio_buffer;
-    short* outbuf = (short*)ioData->mBuffers[0].mData;
-    
-    int read_pos = app->audio_buffer_position;
-    int buf_end = app->audio_buffer_size;
-    float vol = app->sound_vol;
-    for (UInt32 frame = 0; frame < inNumberFrames; frame++)
-    {
-        outbuf[frame*2] = (short)(vol * inbuf[read_pos*2]);
-        outbuf[frame*2+1] = (short)(vol * inbuf[read_pos*2+1]);
+    OSXWindowStyleMaskBorderless        = 0,
+    OSXWindowStyleMaskTitled            = 1 << 0,
+    OSXWindowStyleMaskClosable          = 1 << 1,
+    OSXWindowStyleMaskMiniaturizable    = 1 << 2,
+    OSXWindowStyleMaskResizable         = 1 << 3,
+    OSXWindowStyleMaskTexturedBackground = 1 << 8,
+    /* Specifies a window whose titlebar and toolbar have a unified look - that is, a continuous background. Under the titlebar and toolbar a horizontal separator line will appear.
+     */
+    OSXWindowStyleMaskUnifiedTitleAndToolbar = 1 << 12,
+    /* When set, the window will appear full screen. This mask is automatically toggled when toggleFullScreen: is called.
+     */
+    OSXWindowStyleMaskFullScreen = 1 << 14,
+};
 
-        read_pos++;
-        if(read_pos == buf_end)
-            read_pos = 0;
-    }
-    app->audio_buffer_position = read_pos;
+enum {
+    OSXOpenGLPFAAllRenderers       =   1,    /* choose from all available renderers          */
+    OSXOpenGLPFATripleBuffer       =   3,    /* choose a triple buffered pixel format        */
+    OSXOpenGLPFADoubleBuffer       =   5,    /* choose a double buffered pixel format        */
+    OSXOpenGLPFAAuxBuffers         =   7,    /* number of aux buffers                        */
+    OSXOpenGLPFAColorSize          =   8,    /* number of color buffer bits                  */
+    OSXOpenGLPFAAlphaSize          =  11,    /* number of alpha component bits               */
+    OSXOpenGLPFADepthSize          =  12,    /* number of depth buffer bits                  */
+    OSXOpenGLPFAStencilSize        =  13,    /* number of stencil buffer bits                */
+    OSXOpenGLPFAAccumSize          =  14,    /* number of accum buffer bits                  */
+    OSXOpenGLPFAMinimumPolicy      =  51,    /* never choose smaller buffers than requested  */
+    OSXOpenGLPFAMaximumPolicy      =  52,    /* choose largest buffers of type requested     */
+    OSXOpenGLPFASampleBuffers      =  55,    /* number of multi sample buffers               */
+    OSXOpenGLPFASamples            =  56,    /* number of samples per multi sample buffer    */
+    OSXOpenGLPFAAuxDepthStencil    =  57,    /* each aux buffer has its own depth stencil    */
+    OSXOpenGLPFAColorFloat         =  58,    /* color buffers store floating point pixels    */
+    OSXOpenGLPFAMultisample        =  59,    /* choose multisampling                         */
+    OSXOpenGLPFASupersample        =  60,    /* choose supersampling                         */
+    OSXOpenGLPFASampleAlpha        =  61,    /* request alpha filtering                      */
+    OSXOpenGLPFARendererID         =  70,    /* request renderer by ID                       */
+    OSXOpenGLPFANoRecovery         =  72,    /* disable all failure recovery systems         */
+    OSXOpenGLPFAAccelerated        =  73,    /* choose a hardware accelerated renderer       */
+    OSXOpenGLPFAClosestPolicy      =  74,    /* choose the closest color buffer to request   */
+    OSXOpenGLPFABackingStore       =  76,    /* back buffer contents are valid after swap    */
+    OSXOpenGLPFAScreenMask         =  84,    /* bit mask of supported physical screens       */
+    OSXOpenGLPFAAllowOfflineRenderers  = 96,  /* allow use of offline renderers               */
+    OSXOpenGLPFAAcceleratedCompute =  97,    /* choose a hardware accelerated compute device */
+    OSXOpenGLPFAVirtualScreenCount = 128,    /* number of virtual screens in this format     */
+    OSXOpenGLPFAOpenGLProfile       =  99, /* specify an OpenGL Profile to use             */
     
-    return noErr;
-}
+};
+typedef uint32_t OSXOpenGLPixelFormatAttribute;
 
-void app_internal_osx_audio_init(app_t* app)
+enum {
+    OSXOpenGLProfileVersionLegacy   = 0x1000,   /* choose a Legacy/Pre-OpenGL 3.0 Implementation */
+    OSXOpenGLProfileVersion3_2Core  = 0x3200,   /* choose an OpenGL 3.2 Core Implementation      */
+    OSXOpenGLProfileVersion4_1Core  = 0x4100    /* choose an OpenGL 4.1 Core Implementation      */
+};
+
+enum {
+    OSXOpenGLContextParameterSwapInterval = 222, /* 1 param.  0 -> Don't sync, 1 -> Sync to vertical retrace     */
+};
+
+enum {
+    OSXTerminateCancel = 0,
+    OSXTerminateNow = 1,
+    OSXTerminateLater = 2
+};
+
+enum {
+    OSXEventTypeLeftMouseDown             = 1,
+    OSXEventTypeLeftMouseUp               = 2,
+    OSXEventTypeRightMouseDown            = 3,
+    OSXEventTypeRightMouseUp              = 4,
+    OSXEventTypeMouseMoved                = 5,
+    OSXEventTypeLeftMouseDragged          = 6,
+    OSXEventTypeRightMouseDragged         = 7,
+    OSXEventTypeMouseEntered              = 8,
+    OSXEventTypeMouseExited               = 9,
+    OSXEventTypeKeyDown                   = 10,
+    OSXEventTypeKeyUp                     = 11,
+    OSXEventTypeFlagsChanged              = 12,
+    OSXEventTypeAppKitDefined             = 13,
+    OSXEventTypeSystemDefined             = 14,
+    OSXEventTypeApplicationDefined        = 15,
+    OSXEventTypePeriodic                  = 16,
+    OSXEventTypeCursorUpdate              = 17,
+    OSXEventTypeScrollWheel               = 22,
+    OSXEventTypeTabletPoint               = 23,
+    OSXEventTypeTabletProximity           = 24,
+    OSXEventTypeOtherMouseDown            = 25,
+    OSXEventTypeOtherMouseUp              = 26,
+    OSXEventTypeOtherMouseDragged         = 27,
+    /* The following event types are available on some hardware on 10.5.2 and later */
+    OSXEventTypeGesture       = 29,
+    OSXEventTypeMagnify       = 30,
+    OSXEventTypeSwipe         = 31,
+    OSXEventTypeRotate        = 18,
+    OSXEventTypeBeginGesture   = 19,
+    OSXEventTypeEndGesture    = 20,
+    
+#if __LP64__
+    OSXEventTypeSmartMagnify  = 32,
+#endif
+    OSXEventTypeQuickLook  = 33,
+    
+#if __LP64__
+    OSXEventTypePressure  = 34,
+    OSXEventTypeDirectTouch  = 37,
+#endif
+};
+
+const uint64_t OSXEventMaskAny                          = 0xffffffffffffffff;
+const int OSXWindowCollectionBehaviorFullScreenPrimary  = 1 << 7;
+const int OSXBackingStoreBuffered                       = 2;
+
+struct app_t
 {
-    AudioComponentDescription defaultOutputDescription;
-    defaultOutputDescription.componentType = kAudioUnitType_Output;
-    defaultOutputDescription.componentSubType = kAudioUnitSubType_DefaultOutput;
-    defaultOutputDescription.componentManufacturer = kAudioUnitManufacturer_Apple;
-    defaultOutputDescription.componentFlags = 0;
-    defaultOutputDescription.componentFlagsMask = 0;
+    void* memctx;
+    void* logctx;
+    void* fatalctx;
+    app_interpolation_t interpolation;
+    app_screenmode_t screenmode;
     
-    // Get the default playback output unit
-    AudioComponent defaultOutput = AudioComponentFindNext(NULL, &defaultOutputDescription);
-    //    NSAssert(defaultOutput, @"Can't find default output");
+    bool initialized;
+    bool closed;
+    bool has_focus;
+    bool is_minimized;
     
-    // Create a new unit based on this that we'll use for output
-    OSErr err = AudioComponentInstanceNew(defaultOutput, &app->audioUnit);
-    //    NSAssert1(toneUnit, @"Error creating unit: %ld", err);
+    id window;
     
-    // Set our audio output function on the unit
-    AURenderCallbackStruct input;
-    input.inputProc = app_internal_osx_audio_output_cb;
-    input.inputProcRefCon = app;
-    err = AudioUnitSetProperty(app->audioUnit,
-                               kAudioUnitProperty_SetRenderCallback,
-                               kAudioUnitScope_Input,
-                               0,
-                               &input,
-                               sizeof(input));
-    //    NSAssert1(err == noErr, @"Error setting callback: %ld", err);
+    int display_count;
+    app_display_t displays[ 16 ];
     
-    // Set the format to stereo, 16bit signed integer, linear PCM
-    const int bytes_per_channel = sizeof(short);
-    double sampleRate = 44100;
-    int channels = 2;
+    struct app_internal_opengl_t gl;
     
-    AudioStreamBasicDescription streamFormat = {0};
-    streamFormat.mSampleRate = sampleRate;
-    streamFormat.mFormatID = kAudioFormatLinearPCM;
-    streamFormat.mFormatFlags = kAudioFormatFlagIsSignedInteger;
-    streamFormat.mBytesPerPacket = bytes_per_channel * channels;
-    streamFormat.mFramesPerPacket = 1;
-    streamFormat.mBytesPerFrame = bytes_per_channel * channels;
-    streamFormat.mChannelsPerFrame = channels;
-    streamFormat.mBitsPerChannel = bytes_per_channel * 8;
-    err = AudioUnitSetProperty (app->audioUnit,
-                                kAudioUnitProperty_StreamFormat,
-                                kAudioUnitScope_Input,
-                                0,
-                                &streamFormat,
-                                sizeof(AudioStreamBasicDescription));
-    //    NSAssert1(err == noErr, @"Error setting stream format: %ld", err);
+    app_input_event_t input_events[ 1024 ];
+    int input_count;
     
-    AudioUnitInitialize(app->audioUnit);
-    app->audio_buffer = NULL;
-    app->audio_buffer_size = 0;
-    app->audio_buffer_position = 0;
-    app->sound_vol = 1.0f;
-}
+    int windowed_x;
+    int windowed_y;
+    int windowed_h;
+    int windowed_w;
+    int fullscreen_width;
+    int fullscreen_height;
+    
+    AudioComponentInstance audioUnit;
+    APP_S16* audio_buffer;
+    int audio_buffer_size;
+    int audio_buffer_position;
+    float sound_vol;
+};
 
 static app_key_t app_internal_osx_map_key(int keyCode, char keyChar)
 {
@@ -3056,7 +3118,7 @@ static app_key_t app_internal_osx_map_key(int keyCode, char keyChar)
         default:
             break;
     }
-
+    
     switch(keyCode)
     {
         case OSX_KEY_F1:
@@ -3191,15 +3253,456 @@ void app_internal_osx_add_scroll_event(app_t* app, float scrollY)
     app_internal_add_input_event( app, &event );
 }
 
-// called from app.m when the user presses the fullscreen button in the window bar.
-void app_internal_osx_window_fullscreen_changed(app_t* app, bool fullscreen)
+// NSWindow and NSApplication delegate methods
+
+void osx_window_keyDown(id self, SEL _cmd, id event)
 {
-    app_screenmode(app, fullscreen ? APP_SCREENMODE_FULLSCREEN : APP_SCREENMODE_WINDOW);
+    // empty function, but necessary to swallow the key event, so it isn't considered as unhandled.
+}
+
+void osx_applicationDidFinishLaunching(id self, SEL _cmd, id notification)
+{
+}
+
+BOOL osx_applicationShouldTerminateAfterLastWindowClosed(id self, SEL _cmd, id sender)
+{
+    return YES;
+}
+
+int osx_applicationShouldTerminate(id self, SEL _cmd, id sender)
+{
+    app_t* app;
+    object_getInstanceVariable(self, "app", (void*)&app);
+    app->closed = true;
+    
+    // don't terminate immediately, just wait for the app to close.
+    return OSXTerminateCancel;
+}
+
+void osx_windowWillClose(id self, SEL _cmd, id notification)
+{
+    app_t* app;
+    object_getInstanceVariable(self, "app", (void*)&app);
+    app->closed = true;
+}
+
+void osx_windowDidResize(id self, SEL _cmd, id notification)
+{
+    CGRect contentRect = objc_rect_msgSend(self, sel_getUid("contentLayoutRect"));
+    id glView;
+    object_getInstanceVariable(self, "glView", (void*)&glView);
+    
+    objc_void_msgSend_rect(glView, sel_getUid("setFrame:"), contentRect);
+}
+
+void osx_windowDidMove(id self, SEL _cmd, id notification)
+{
+}
+
+void osx_windowDidMiniaturize(id self, SEL _cmd, id notification)
+{
+}
+
+void osx_windowDidDeminiaturize(id self, SEL _cmd, id notification)
+{
+}
+
+void osx_windowDidEnterFullScreen(id self, SEL _cmd, id notification)
+{
+    id screen = objc_id_msgSend((id)objc_getClass("NSScreen"), sel_getUid("mainScreen"));
+    CGRect screenFrame = objc_rect_msgSend(screen, sel_getUid("frame"));
+    objc_void_msgSend_rect_bool(self, sel_getUid("setFrame:display:"), screenFrame, YES);
+    
+    app_t* app;
+    object_getInstanceVariable(self, "app", (void*)&app);
+    app_screenmode(app, APP_SCREENMODE_FULLSCREEN);
+}
+
+void osx_windowDidExitFullScreen(id self, SEL _cmd, id notification)
+{
+    app_t* app;
+    object_getInstanceVariable(self, "app", (void*)&app);
+    app_screenmode(app, APP_SCREENMODE_WINDOW);
+}
+
+//
+
+int app_internal_osx_get_screen_count()
+{
+    id screens = objc_id_msgSend((id)objc_getClass("NSScreen"), sel_getUid("screens"));
+    int screen_count = objc_int_msgSend(screens, sel_getUid("count"));
+    return screen_count;
+}
+
+void app_internal_osx_get_screen_rect(int screen_idx, int* x, int* y, int* w, int* h)
+{
+    id screens = objc_id_msgSend((id)objc_getClass("NSScreen"), sel_getUid("screens"));
+    int screen_count = objc_int_msgSend(screens, sel_getUid("count"));
+    if(screen_idx < 0 || screen_idx >= screen_count)
+        return;
+    
+    id screen = objc_id_msgSend_int(screens, sel_getUid("objectAtIndex:"), screen_idx);
+    CGRect screenFrame = objc_rect_msgSend(screen, sel_getUid("frame"));
+    
+    if(x != NULL) *x = screenFrame.origin.x;
+    if(y != NULL) *y = screenFrame.origin.y;
+    if(w != NULL) *w = screenFrame.size.width;
+    if(h != NULL) *h = screenFrame.size.height;
+}
+
+void app_internal_osx_get_window_position(id app_window, int* x, int* y)
+{
+    CGRect windowFrame = objc_rect_msgSend(app_window, sel_getUid("frame"));
+    
+    if(x != NULL) *x = windowFrame.origin.x;
+    if(y != NULL) *y = windowFrame.origin.y;
+}
+
+void app_internal_osx_get_window_content_size(id app_window, int* w, int* h)
+{
+    CGRect contentFrame = objc_rect_msgSend(app_window, sel_getUid("contentLayoutRect"));
+    
+    if(w != NULL) *w = contentFrame.size.width;
+    if(h != NULL) *h = contentFrame.size.height;
+}
+
+void app_internal_osx_set_window_position(id app_window, int x, int y)
+{
+    objc_void_msgSend_point(app_window, sel_getUid("setFrameOrigin:"), (CGPoint){x,y});
+}
+
+void app_internal_osx_set_window_content_size(id app_window, int w, int h)
+{
+    objc_void_msgSend_size(app_window, sel_getUid("setContentSize:"), (CGSize){w,h});
+}
+
+void app_internal_osx_set_window_title(id app_window, const char* title)
+{
+    id titleStr = objc_id_msgSend_voidstar((id)objc_getClass("NSString"), sel_getUid("stringWithUTF8String:"), (char*)title);
+    objc_void_msgSend_id(app_window, sel_getUid("setTitle:"), titleStr);
+}
+
+void app_internal_osx_show_window(id app_window)
+{
+    objc_void_msgSend_id(app_window, sel_getUid("makeKeyAndOrderFront:"), app_window);
+}
+
+void app_internal_osx_set_fullscreen(id app_window, bool fullscreen)
+{
+    int styleMask = objc_int_msgSend(app_window, sel_getUid("styleMask"));
+    bool isFS = ((styleMask & OSXWindowStyleMaskFullScreen) == OSXWindowStyleMaskFullScreen);
+    
+    if(isFS == fullscreen)
+        return;
+    
+    if(fullscreen)
+    {
+        id mainScreen = objc_id_msgSend((id)objc_getClass("NSScreen"), sel_getUid("mainScreen"));
+        CGRect screenFrame = objc_rect_msgSend(mainScreen, sel_getUid("frame"));
+        objc_void_msgSend_rect_bool(app_window, sel_getUid("setFrame:display:"), screenFrame, YES);
+        objc_void_msgSend_id(app_window, sel_getUid("toggleFullScreen:"), app_window);
+    }
+    else
+    {
+        objc_void_msgSend_id(app_window, sel_getUid("toggleFullScreen:"), app_window);
+    }
+}
+
+void app_internal_osx_handle_events(id app_window)
+{
+    id autoReleasePool = objc_id_msgSend((id)objc_getClass("NSAutoreleasePool"), sel_getUid("alloc"));
+    autoReleasePool = objc_id_msgSend(autoReleasePool, sel_getUid("init"));
+    
+    id nsapp = objc_id_msgSend((id)objc_getClass("NSApplication"), sel_getUid("sharedApplication"));
+    id defaultRunLoopMode = objc_id_msgSend_voidstar((id)objc_getClass("NSString"), sel_getUid("stringWithUTF8String:"), "kCFRunLoopDefaultMode");
+    
+    app_t* app;
+    object_getInstanceVariable(app_window, "app", (void*)&app);
+    
+    while(true)
+    {
+        id event = objc_next_event_msgSend(nsapp, sel_getUid("nextEventMatchingMask:untilDate:inMode:dequeue:"), OSXEventMaskAny, NULL, defaultRunLoopMode, YES);
+        if(event == NULL)
+            break;
+        
+        int type = objc_int_msgSend(event, sel_getUid("type"));
+        
+        switch(type)
+        {
+            case OSXEventTypeKeyDown:
+            case OSXEventTypeKeyUp:
+            {
+                bool isUp = type == OSXEventTypeKeyUp;
+                int keyCode = objc_int_msgSend(event, sel_getUid("keyCode"));
+                id nsStr = objc_id_msgSend(event, sel_getUid("characters"));
+                const char* charStr = objc_charstar_msgSend(nsStr, sel_getUid("UTF8String"));
+                app_internal_osx_add_key_event(app, keyCode, charStr[0], isUp);
+            }
+                break;
+            case OSXEventTypeMouseMoved:
+            case OSXEventTypeLeftMouseDragged:
+            case OSXEventTypeOtherMouseDragged:
+            {
+                CGPoint window_point = objc_point_msgSend(event, sel_getUid("locationInWindow"));
+                
+                id glView;
+                object_getInstanceVariable(app_window, "glView", (void*)&glView);
+                CGPoint local_point = objc_point_msgSend_point_id(glView, sel_getUid("convertPoint:fromView:"), window_point, NULL);
+                CGRect viewBounds = objc_rect_msgSend(glView, sel_getUid("bounds"));
+                
+                int view_height = viewBounds.size.height;
+                int x = (int)local_point.x;
+                int y = (int)(view_height - local_point.y - 1);
+                
+                app_internal_osx_add_mouse_move_event(app, x,y);
+            }
+                break;
+            case OSXEventTypeLeftMouseDown:
+            case OSXEventTypeOtherMouseDown:
+            {
+                int clickCount = objc_int_msgSend(event, sel_getUid("clickCount"));
+                bool doubleClick = (clickCount % 2) == 0;
+                int buttonNum = objc_int_msgSend(event, sel_getUid("buttonNumber"));
+                
+                app_internal_osx_add_mouse_press_event(app, buttonNum, false, doubleClick);
+            }
+                break;
+            case OSXEventTypeLeftMouseUp:
+            case OSXEventTypeOtherMouseUp:
+            {
+                int buttonNum = objc_int_msgSend(event, sel_getUid("buttonNumber"));
+                
+                app_internal_osx_add_mouse_press_event(app, buttonNum, true, false);
+            }
+                break;
+            case OSXEventTypeScrollWheel:
+            {
+                float deltaY = objc_double_msgSend(event, sel_getUid("deltaY"));
+                app_internal_osx_add_scroll_event(app, deltaY);
+            }
+                break;
+            default:
+                break;
+        }
+        
+        objc_void_msgSend_id(nsapp, sel_getUid("sendEvent:"), event);
+    }
+    
+    objc_void_msgSend(autoReleasePool, sel_getUid("release"));
+}
+
+void app_internal_osx_present(id app_window)
+{
+    if(objc_bool_msgSend(app_window, sel_getUid("isVisible")))
+    {
+        id glView;
+        object_getInstanceVariable(app_window, "glView", (void*)&glView);
+        id glContext = objc_id_msgSend(glView, sel_getUid("openGLContext"));
+        objc_void_msgSend(glContext, sel_getUid("flushBuffer"));
+    }
+}
+
+id app_internal_osx_create_window(id title, int width, int height)
+{
+    id app_window = objc_id_msgSend((id)objc_getClass("AppWindow"), sel_getUid("alloc"));
+    CGRect contentRect = (CGRect){0,0,width,height};
+    
+    app_window = objc_window_init_msgSend(app_window, sel_getUid("initWithContentRect:styleMask:backing:defer:"), contentRect, OSXWindowStyleMaskClosable | OSXWindowStyleMaskTitled | OSXWindowStyleMaskMiniaturizable | OSXWindowStyleMaskResizable, OSXBackingStoreBuffered, false);
+    
+    objc_void_msgSend_id(app_window, sel_getUid("setTitle:"), title);
+    
+    // get a OpenGL 3.2 context
+    OSXOpenGLPixelFormatAttribute pixelFormatAttributes[] = {
+        OSXOpenGLPFAOpenGLProfile, OSXOpenGLProfileVersion3_2Core,
+        OSXOpenGLPFAColorSize,   24,
+        OSXOpenGLPFAAlphaSize,   8,
+        OSXOpenGLPFADepthSize,   24,
+        OSXOpenGLPFAStencilSize, 8,
+        OSXOpenGLPFADoubleBuffer,
+        OSXOpenGLPFAAccelerated,
+        OSXOpenGLPFANoRecovery,
+        0
+    };
+    
+    id format = objc_id_msgSend((id)objc_getClass("NSOpenGLPixelFormat"), sel_getUid("alloc"));
+    format = objc_id_msgSend_voidstar(format, sel_getUid("initWithAttributes:"), pixelFormatAttributes);
+    
+    id glView = objc_id_msgSend((id)objc_getClass("NSOpenGLView"), sel_getUid("alloc"));
+    glView = objc_view_init_msgSend(glView, sel_getUid("initWithFrame:pixelFormat:"), contentRect, format);
+    
+    objc_void_msgSend(glView, sel_getUid("acceptsFirstResponder"));
+    id glContext = objc_id_msgSend(glView, sel_getUid("openGLContext"));
+    objc_void_msgSend(glContext, sel_getUid("makeCurrentContext"));
+    GLint swapInt = 1;
+    objc_void_msgSend_voidstar_int(glContext, sel_getUid("setValues:forParameter:"), &swapInt, OSXOpenGLContextParameterSwapInterval);
+    objc_void_msgSend_id(app_window, sel_getUid("setContentView:"), glView);
+    
+    objc_void_msgSend(glView, sel_getUid("prepareOpenGL"));
+    
+    objc_void_msgSend_id(app_window, sel_getUid("setDelegate:"), app_window);
+    objc_void_msgSend_bool(app_window, sel_getUid("setAcceptsMouseMovedEvents:"), YES);
+    objc_void_msgSend_bool(app_window, sel_getUid("setOpaque:"), YES);
+    
+    object_setInstanceVariable(app_window, "glView", glView);
+    
+    objc_void_msgSend_int(app_window, sel_getUid("setCollectionBehavior:"), OSXWindowCollectionBehaviorFullScreenPrimary);
+    
+    return app_window;
+}
+
+id app_internal_osx_view_init(app_t* app, int width, int height)
+{
+    id nsapp = objc_id_msgSend((id)objc_getClass("NSApplication"), sel_getUid("sharedApplication"));
+    
+    Class AppWindow = objc_allocateClassPair((Class)objc_getClass("NSWindow"), "AppWindow", 0);
+    class_addIvar(AppWindow, "glView", sizeof(id), 4, "@");
+    class_addIvar(AppWindow, "app", sizeof(app_t*), 4, "^app_t=}");
+    
+    // add delegate methods for NSWindow and NSApplication
+    class_addMethod(AppWindow, sel_getUid("keyDown:"), (IMP)osx_window_keyDown, "v@:@");
+    class_addMethod(AppWindow, sel_getUid("applicationDidFinishLaunching:"), (IMP)osx_applicationDidFinishLaunching, "v@:@");
+    class_addMethod(AppWindow, sel_getUid("applicationShouldTerminate:"), (IMP)osx_applicationShouldTerminate, "i@:@");
+    class_addMethod(AppWindow, sel_getUid("windowWillClose:"), (IMP)osx_windowWillClose, "v@:@");
+    class_addMethod(AppWindow, sel_getUid("windowDidResize:"), (IMP)osx_windowDidResize, "v@:@");
+    class_addMethod(AppWindow, sel_getUid("windowDidMove:"), (IMP)osx_windowDidMove, "v@:@");
+    class_addMethod(AppWindow, sel_getUid("windowDidMiniaturize:"), (IMP)osx_windowDidMiniaturize, "v@:@");
+    class_addMethod(AppWindow, sel_getUid("windowDidDeminiaturize:"), (IMP)osx_windowDidDeminiaturize, "v@:@");
+    class_addMethod(AppWindow, sel_getUid("windowDidEnterFullScreen:"), (IMP)osx_windowDidEnterFullScreen, "v@:@");
+    class_addMethod(AppWindow, sel_getUid("windowDidExitFullScreen:"), (IMP)osx_windowDidExitFullScreen, "v@:@");
+    class_addMethod(AppWindow, sel_getUid("applicationShouldTerminateAfterLastWindowClosed:"), (IMP)osx_applicationShouldTerminateAfterLastWindowClosed, "c@:@");
+    
+    // register our class
+    objc_registerClassPair(AppWindow);
+    
+    int applicationActivationPolicyRegular = 0;
+    int applicationPresentationDefault = 0;
+    objc_void_msgSend_int(nsapp, sel_getUid("setActivationPolicy:"), applicationActivationPolicyRegular);
+    objc_void_msgSend_int(nsapp, sel_getUid("setPresentationOptions:"), applicationPresentationDefault);
+    
+    id processInfo = objc_id_msgSend((id)objc_getClass("NSProcessInfo"), sel_getUid("processInfo"));
+    id appName = objc_id_msgSend(processInfo, sel_getUid("processName"));
+    
+    // create the window
+    id app_window = app_internal_osx_create_window(appName, width, height);
+    object_setInstanceVariable(app_window, "app", app);
+    
+    // add a menubar with a quit option
+    id menubar = objc_id_msgSend((id)objc_getClass("NSMenu"), sel_getUid("new"));
+    id appMenuItem = objc_id_msgSend((id)objc_getClass("NSMenuItem"), sel_getUid("new"));
+    objc_void_msgSend_id(menubar, sel_getUid("addItem:"), appMenuItem);
+    objc_void_msgSend_id(nsapp, sel_getUid("setMainMenu:"), menubar);
+    id appMenu = objc_id_msgSend((id)objc_getClass("NSMenu"), sel_getUid("new"));
+    id quitTitle = objc_id_msgSend_voidstar((id)objc_getClass("NSString"), sel_getUid("stringWithUTF8String:"), "Quit ");
+    id qKey = objc_id_msgSend_voidstar((id)objc_getClass("NSString"), sel_getUid("stringWithUTF8String:"), "q");
+    quitTitle = objc_id_msgSend_id(quitTitle, sel_getUid("stringByAppendingString:"), appName);
+    id quitMenuItem = objc_id_msgSend((id)objc_getClass("NSMenuItem"), sel_getUid("alloc"));
+    quitMenuItem = objc_menuitem_init_msgSend(quitMenuItem, sel_getUid("initWithTitle:action:keyEquivalent:"), quitTitle, sel_getUid("terminate:"), qKey);
+    objc_void_msgSend_id(appMenu, sel_getUid("addItem:"), quitMenuItem);
+    objc_void_msgSend_id(appMenuItem, sel_getUid("setSubmenu:"), appMenu);
+    
+    objc_void_msgSend_id(nsapp, sel_getUid("setDelegate:"), app_window);
+    objc_void_msgSend_bool(nsapp, sel_getUid("activateIgnoringOtherApps:"), YES);
+    objc_void_msgSend(nsapp, sel_getUid("finishLaunching"));
+    
+    return app_window;
+}
+
+OSStatus app_internal_osx_audio_output_cb(
+                    void *inRefCon,
+                    AudioUnitRenderActionFlags     *ioActionFlags,
+                    const AudioTimeStamp         *inTimeStamp,
+                    UInt32                         inBusNumber,
+                    UInt32                         inNumberFrames,
+                    AudioBufferList             *ioData)
+{
+    app_t* app = (app_t*) inRefCon;
+    if(app->audio_buffer == NULL)
+        return noErr;
+    
+    short* inbuf = (short*)app->audio_buffer;
+    short* outbuf = (short*)ioData->mBuffers[0].mData;
+    
+    int read_pos = app->audio_buffer_position;
+    int buf_end = app->audio_buffer_size;
+    float vol = app->sound_vol;
+    for (UInt32 frame = 0; frame < inNumberFrames; frame++)
+    {
+        outbuf[frame*2] = (short)(vol * inbuf[read_pos*2]);
+        outbuf[frame*2+1] = (short)(vol * inbuf[read_pos*2+1]);
+
+        read_pos++;
+        if(read_pos == buf_end)
+            read_pos = 0;
+    }
+    app->audio_buffer_position = read_pos;
+    
+    return noErr;
+}
+
+void app_internal_osx_audio_init(app_t* app)
+{
+    AudioComponentDescription defaultOutputDescription;
+    defaultOutputDescription.componentType = kAudioUnitType_Output;
+    defaultOutputDescription.componentSubType = kAudioUnitSubType_DefaultOutput;
+    defaultOutputDescription.componentManufacturer = kAudioUnitManufacturer_Apple;
+    defaultOutputDescription.componentFlags = 0;
+    defaultOutputDescription.componentFlagsMask = 0;
+    
+    // Get the default playback output unit
+    AudioComponent defaultOutput = AudioComponentFindNext(NULL, &defaultOutputDescription);
+    //    NSAssert(defaultOutput, @"Can't find default output");
+    
+    // Create a new unit based on this that we'll use for output
+    OSErr err = AudioComponentInstanceNew(defaultOutput, &app->audioUnit);
+    //    NSAssert1(toneUnit, @"Error creating unit: %ld", err);
+    
+    // Set our audio output function on the unit
+    AURenderCallbackStruct input;
+    input.inputProc = app_internal_osx_audio_output_cb;
+    input.inputProcRefCon = app;
+    err = AudioUnitSetProperty(app->audioUnit,
+                               kAudioUnitProperty_SetRenderCallback,
+                               kAudioUnitScope_Input,
+                               0,
+                               &input,
+                               sizeof(input));
+    //    NSAssert1(err == noErr, @"Error setting callback: %ld", err);
+    
+    // Set the format to stereo, 16bit signed integer, linear PCM
+    const int bytes_per_channel = sizeof(short);
+    double sampleRate = 44100;
+    int channels = 2;
+    
+    AudioStreamBasicDescription streamFormat = {0};
+    streamFormat.mSampleRate = sampleRate;
+    streamFormat.mFormatID = kAudioFormatLinearPCM;
+    streamFormat.mFormatFlags = kAudioFormatFlagIsSignedInteger;
+    streamFormat.mBytesPerPacket = bytes_per_channel * channels;
+    streamFormat.mFramesPerPacket = 1;
+    streamFormat.mBytesPerFrame = bytes_per_channel * channels;
+    streamFormat.mChannelsPerFrame = channels;
+    streamFormat.mBitsPerChannel = bytes_per_channel * 8;
+    err = AudioUnitSetProperty (app->audioUnit,
+                                kAudioUnitProperty_StreamFormat,
+                                kAudioUnitScope_Input,
+                                0,
+                                &streamFormat,
+                                sizeof(AudioStreamBasicDescription));
+    //    NSAssert1(err == noErr, @"Error setting stream format: %ld", err);
+    
+    AudioUnitInitialize(app->audioUnit);
+    app->audio_buffer = NULL;
+    app->audio_buffer_size = 0;
+    app->audio_buffer_position = 0;
+    app->sound_vol = 1.0f;
 }
 
 int app_run( int (*app_proc)( app_t*, void* ), void* user_data, void* memctx, void* logctx, void* fatalctx )
 {
     int result = 0xff;
+        
+    id autoReleasePool = objc_id_msgSend((id)objc_getClass("NSAutoreleasePool"), sel_getUid("alloc"));
+    autoReleasePool = objc_id_msgSend(autoReleasePool, sel_getUid("init"));
     
     // Init app instance
     app_t* app = (app_t*) APP_MALLOC( memctx, sizeof( app_t ) );
@@ -3340,6 +3843,7 @@ int app_run( int (*app_proc)( app_t*, void* ), void* user_data, void* memctx, vo
 init_failed:
     if( !app_internal_opengl_term( &app->gl ) ) app_log( app, APP_LOG_LEVEL_WARNING, "Failed to terminate OpenGL" );
     // shutdown audiounit??
+    objc_void_msgSend(autoReleasePool, sel_getUid("release"));
     
     t = time( NULL );
     struct tm* end = localtime( &t );
@@ -3371,15 +3875,12 @@ app_state_t app_yield( app_t* app )
     
     app_internal_osx_handle_events(app->window);
     
-    if(app_internal_osx_should_terminate())
-        return APP_STATE_EXIT_REQUESTED;
-    else
-        return APP_STATE_NORMAL;
+    return app->closed ? APP_STATE_EXIT_REQUESTED : APP_STATE_NORMAL;
 }
 
 void app_cancel_exit( app_t* app )
 {
-    app_internal_osx_cancel_terminate();
+    app->closed = false;
 }
 
 void app_title( app_t* app, char const* title )
@@ -3413,14 +3914,19 @@ char const* app_appdata( app_t* app )
 
 APP_U64 app_time_count( app_t* app )
 {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1000000000 + ts.tv_nsec;
+    return mach_absolute_time();
 }
+
 APP_U64 app_time_freq( app_t* app )
 {
-    // time count is in nanoseconds.
-    return 1000000000;
+    static APP_U64 time_freq = 0;
+    if(time_freq == 0)
+    {
+        mach_timebase_info_data_t info;
+        mach_timebase_info(&info);
+        time_freq = (APP_U64)(1000000000 * ((double)info.numer / info.denom));
+    }
+    return time_freq;
 }
 
 void app_log( app_t* app, app_log_level_t level, char const* message )
