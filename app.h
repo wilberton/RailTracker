@@ -15,7 +15,7 @@
 #define app_h
 
 #if !defined(APP_WINDOWS) && !defined(APP_MACOS) && !defined(APP_NULL)
-#if defined _WIN32
+#if defined WIN32
 #define APP_WINDOWS
 #elif defined __APPLE__
 #define APP_MACOS
@@ -3293,6 +3293,18 @@ void osx_windowDidResize(id self, SEL _cmd, id notification)
     object_getInstanceVariable(self, "glView", (void*)&glView);
     
     objc_void_msgSend_rect(glView, sel_getUid("setFrame:"), contentRect);
+    
+    app_t* app;
+    object_getInstanceVariable(self, "app", (void*)&app);
+
+    int width = (int)contentRect.size.width;
+    int height = (int)contentRect.size.height;
+    app->windowed_w = width;
+    app->windowed_h = height;
+    if(app->screenmode == APP_SCREENMODE_WINDOW)
+    {
+        app_internal_opengl_resize( &app->gl, width, height );
+    }
 }
 
 void osx_windowDidMove(id self, SEL _cmd, id notification)
