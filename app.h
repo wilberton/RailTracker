@@ -14,11 +14,13 @@
 #ifndef app_h
 #define app_h
 
-#if !defined(APP_WINDOWS) && !defined(APP_MACOS) && !defined(APP_NULL)
+#if !defined(APP_WINDOWS) && !defined(APP_MACOS) && !defined(APP_LINUX_X11) && !defined(APP_NULL)
 #if defined WIN32
 #define APP_WINDOWS
 #elif defined __APPLE__
 #define APP_MACOS
+#elif defined __linux__
+#define APP_LINUX_X11
 #endif
 #endif
 
@@ -726,6 +728,7 @@ void app_coordinates_bitmap_to_window( app_t* app, int width, int height, int* x
 #ifndef APP_NULL
 
 #if defined( APP_WINDOWS )
+
 #define _CRT_NONSTDC_NO_DEPRECATE
 #define _CRT_SECURE_NO_WARNINGS
 #include <stddef.h>
@@ -739,7 +742,9 @@ typedef char APP_GLchar;
 typedef unsigned char APP_GLboolean;
 typedef size_t APP_GLsizeiptr;
 typedef unsigned int APP_GLbitfield;
+
 #elif defined( APP_MACOS )
+
 #define _CRT_NONSTDC_NO_DEPRECATE
 #define _CRT_SECURE_NO_WARNINGS
 #include <stddef.h>
@@ -755,8 +760,27 @@ typedef GLchar APP_GLchar;
 typedef GLboolean APP_GLboolean;
 typedef GLsizeiptr APP_GLsizeiptr;
 typedef GLbitfield APP_GLbitfield;
+
+#elif defined( APP_LINUX_X11 )
+
+#define _CRT_NONSTDC_NO_DEPRECATE
+#define _CRT_SECURE_NO_WARNINGS
+#include <stddef.h>
+#include <string.h>
+#include <GL/gl.h>
+#define APP_GLCALLTYPE
+typedef GLuint APP_GLuint;
+typedef GLsizei APP_GLsizei;
+typedef GLenum APP_GLenum;
+typedef GLint APP_GLint;
+typedef GLfloat APP_GLfloat;
+typedef GLchar APP_GLchar;
+typedef GLboolean APP_GLboolean;
+typedef GLsizeiptr APP_GLsizeiptr;
+typedef GLbitfield APP_GLbitfield;
+
 #else
-#error Undefined platform. Define APP_WINDOWS, APP_MACOS or APP_NULL.
+#error Undefined platform. Define APP_WINDOWS, APP_MACOS, APP_LINUX_X11 or APP_NULL.
 #endif
 
 #define APP_GL_FLOAT 0x1406
@@ -838,7 +862,7 @@ static int app_internal_opengl_init( app_t* app, struct app_internal_opengl_t* g
     gl->window_width = window_width;
     gl->window_height = window_height;
     
-    char const* vs_source =
+    char const* vs_source_gl3 =
         "#version 150\n           \
         in vec4 pos;     \
         out vec2 uv;        \
@@ -849,7 +873,18 @@ static int app_internal_opengl_init( app_t* app, struct app_internal_opengl_t* g
             uv = pos.zw;          \
     }";
     
-    char const* fs_source =
+    char const* vs_source_gl2 =
+        "#version 110\n         \
+        attribute vec4 pos;     \
+        varying vec2 uv;        \
+                                \
+        void main( void )       \
+            {                   \
+            gl_Position = vec4( pos.xy, 0.0, 1.0 ); \
+            uv = pos.zw;        \
+    }";
+
+    char const* fs_source_gl3 =
         "#version 150\n                 \
          in vec2 uv;                    \
          out vec4 fragColor;            \
@@ -861,7 +896,41 @@ static int app_internal_opengl_init( app_t* app, struct app_internal_opengl_t* g
          {                              \
             fragColor = texture( tex, uv ) * vec4( modulate, 1.0 );  \
         }";
-    
+
+    char const* fs_source_gl2 =
+        "#version 110\n                 \
+         varying vec2 uv;               \
+                                        \
+         uniform sampler2D tex;         \
+         uniform vec3 modulate;         \
+                                        \
+         void main(void)                \
+         {                              \
+            gl_FragColor = texture2D( tex, uv ) * vec4( modulate, 1.0 );  \
+        }";
+
+    // choose which shaders to use based on gl major version.
+    char const* vs_source;
+    char const* fs_source;
+    const char* versionStr = glGetString(GL_VERSION);
+    switch(versionStr[0])
+    {
+        case '2':
+            vs_source = vs_source_gl2;
+            fs_source = fs_source_gl2;
+            break;
+        case '3':
+        case '4':
+            vs_source = vs_source_gl3;
+            fs_source = fs_source_gl3;
+            break;
+        default:
+            app_fatal_error( app, "Unsupported OpenGL Version\n" );
+            break;
+    }
+
+
+
 #ifdef APP_REPORT_SHADER_ERRORS
     char error_message[ 1024 ];
 #endif
@@ -4206,8 +4275,1053 @@ void app_coordinates_bitmap_to_window( app_t* app, int width, int height, int* x
     }
 }
 
+#elif defined( APP_LINUX_X11 )
+
+#include <stdbool.h>
+#include <time.h>
+#include <X11/Xlib.h>
+#include <X11/Xatom.h>
+#include <GL/gl.h>
+#include <GL/glx.h>
+#include <alsa/asoundlib.h>
+
+#ifndef APP_MALLOC
+#include <stdlib.h>
+#if defined(__cplusplus)
+#define APP_MALLOC( ctx, size ) ( ::malloc( size ) )
+#define APP_FREE( ctx, ptr ) ( ::free( ptr ) )
 #else
-#error Undefined platform. Define APP_WINDOWS or APP_NULL.
+#define APP_MALLOC( ctx, size ) ( malloc( size ) )
+#define APP_FREE( ctx, ptr ) ( free( ptr ) )
+#endif
+#endif
+
+#ifndef APP_LOG
+#if defined(__cplusplus)
+#define APP_LOG( ctx, level, message ) ::printf( "%s\n", message )
+#else
+#define APP_LOG( ctx, level, message ) printf( "%s\n", message )
+#endif
+#endif
+
+#ifndef APP_FATAL_ERROR
+// todo: use a linux messagebox??
+#define APP_FATAL_ERROR( ctx, message ) { printf( "FATAL ERROR: %s\n", message ); _exit( 0xff ); }
+/*
+#if defined(__cplusplus)
+#define APP_FATAL_ERROR( ctx, message ) { ::printf( "FATAL ERROR: %s\n", message ); \
+::MessageBoxA( 0, message, "Fatal Error!", MB_OK | MB_ICONSTOP ); ::_flushall(); ::_exit( 0xff ); }
+#else
+#define APP_FATAL_ERROR( ctx, message ) { printf( "FATAL ERROR: %s\n", message ); \
+MessageBoxA( 0, message, "Fatal Error!", MB_OK | MB_ICONSTOP ); _flushall(); _exit( 0xff ); }
+#endif
+ */
+#endif
+
+struct app_t 
+{
+    void* memctx;
+    void* logctx;
+    void* fatalctx;
+    app_interpolation_t interpolation;
+    app_screenmode_t screenmode;
+
+    bool initialized;
+    bool closed;
+
+    Display* display;
+    Window window;
+    GLXContext glContext;
+    Colormap colMap;
+
+    int display_count;
+    app_display_t displays[ 16 ];
+    
+    struct app_internal_opengl_t gl;
+    
+    app_input_event_t input_events[ 1024 ];
+    int input_count;
+    
+    int windowed_x;
+    int windowed_y;
+    int windowed_h;
+    int windowed_w;
+    int fullscreen_width;
+    int fullscreen_height;    
+
+    snd_pcm_t* alsa_handle;
+    snd_pcm_hw_params_t* alsa_hw_params;
+
+    APP_S16* audio_buffer;
+    int audio_buffer_size;
+    int audio_buffer_position;
+    float sound_vol;
+};
+
+#define GLX_CONTEXT_MAJOR_VERSION_ARB       0x2091
+#define GLX_CONTEXT_MINOR_VERSION_ARB       0x2092
+typedef GLXContext (*glXCreateContextAttribsARBProc)(Display*, GLXFBConfig, GLXContext, Bool, const int*);
+typedef void(*glXSwapIntervalProc)(unsigned int);
+
+
+static void app_internal_add_input_event( app_t* app, app_input_event_t* event )
+{
+//    if( app->has_focus )
+    {
+        if( app->input_count < sizeof( app->input_events ) / sizeof( *app->input_events ) )
+            app->input_events[ app->input_count++ ] = *event;
+    }
+}
+
+void app_internal_x11_add_key_event(app_t* app, int keyCode, char keyChar, bool isUp)
+{
+    app_input_event_t event;
+    event.type = isUp ? APP_INPUT_KEY_UP : APP_INPUT_KEY_DOWN;
+    event.data.key = 0;//app_internal_osx_map_key(keyCode, keyChar);
+    app_internal_add_input_event(app, &event);
+    
+    if(!isUp)
+    {
+        event.type = APP_INPUT_CHAR;
+        event.data.char_code = keyChar;
+        app_internal_add_input_event(app, &event);
+    }
+}
+
+void app_internal_x11_add_mouse_move_event(app_t* app, int mouse_x, int mouse_y)
+{
+    app_input_event_t event;
+    event.type = APP_INPUT_MOUSE_MOVE;
+    event.data.mouse_pos.x = mouse_x;
+    event.data.mouse_pos.y = mouse_y;
+    
+    app_internal_add_input_event( app, &event );
+}
+
+void app_internal_x11_add_mouse_press_event(app_t* app, int button, bool isUp, bool isDoubleClick)
+{
+    if(button < 0 || button > 2)
+        return;
+    
+    app_input_event_t event;
+    event.type = isDoubleClick ? APP_INPUT_DOUBLE_CLICK : isUp ? APP_INPUT_KEY_UP : APP_INPUT_KEY_DOWN;
+    event.data.key = button == 0 ? APP_KEY_LBUTTON : button == 1 ? APP_KEY_RBUTTON : APP_KEY_MBUTTON;
+    
+    app_internal_add_input_event( app, &event );
+}
+
+void app_internal_x11_add_scroll_event(app_t* app, float scrollY)
+{
+    app_input_event_t event;
+    event.type = APP_INPUT_SCROLL_WHEEL;
+    event.data.wheel_delta = scrollY;
+    
+    app_internal_add_input_event( app, &event );
+}
+
+
+// Helper to check for extension string presence.  Adapted from:
+//   http://www.opengl.org/resources/features/OGLextensions/
+static bool isExtensionSupported(const char *extList, const char *extension)
+{
+  const char *start;
+  const char *where, *terminator;
+  
+  // Extension names should not have spaces.
+  where = strchr(extension, ' ');
+  if (where || *extension == '\0')
+    return false;
+
+  // It takes a bit of care to be fool-proof about parsing the
+  //   OpenGL extensions string. Don't be fooled by sub-strings, etc.
+  for (start=extList;;) {
+    where = strstr(start, extension);
+
+    if (!where)
+      break;
+
+    terminator = where + strlen(extension);
+
+    if ( where == start || *(where - 1) == ' ' )
+      if ( *terminator == ' ' || *terminator == '\0' )
+        return true;
+
+    start = terminator;
+  }
+
+  return false;
+}
+
+static bool ctxErrorOccurred = false;
+static int ctxErrorHandler( Display *dpy, XErrorEvent *ev )
+{
+    ctxErrorOccurred = true;
+    return 0;
+}
+
+extern char *__progname;
+void app_internal_x11_view_init(app_t* app, int width, int height)
+{
+    Display *display = XOpenDisplay(NULL);
+
+    if (!display)
+    {
+        app_fatal_error(app, "Failed to open X display\n");
+    }
+
+    // Get a matching FB config
+    static int visual_attribs[] =
+    {
+      GLX_X_RENDERABLE    , True,
+      GLX_DRAWABLE_TYPE   , GLX_WINDOW_BIT,
+      GLX_RENDER_TYPE     , GLX_RGBA_BIT,
+      GLX_X_VISUAL_TYPE   , GLX_TRUE_COLOR,
+      GLX_RED_SIZE        , 8,
+      GLX_GREEN_SIZE      , 8,
+      GLX_BLUE_SIZE       , 8,
+      GLX_ALPHA_SIZE      , 8,
+      GLX_DEPTH_SIZE      , 24,
+      GLX_STENCIL_SIZE    , 8,
+      GLX_DOUBLEBUFFER    , True,
+      //GLX_SAMPLE_BUFFERS  , 1,
+      //GLX_SAMPLES         , 4,
+      None
+    };
+
+    int glx_major, glx_minor;
+ 
+    // FBConfigs were added in GLX version 1.3.
+    if ( !glXQueryVersion( display, &glx_major, &glx_minor ) || 
+        ( ( glx_major == 1 ) && ( glx_minor < 3 ) ) || ( glx_major < 1 ) )
+    {
+        app_fatal_error (app, "Invalid GLX version\n");
+    }
+
+    int fbcount;
+    GLXFBConfig* fbc = glXChooseFBConfig(display, DefaultScreen(display), visual_attribs, &fbcount);
+    if (!fbc)
+    {
+        app_fatal_error( app, "Failed to retrieve a framebuffer config\n" );
+    }
+
+    // Pick the FB config/visual with the most samples per pixel
+    int best_fbc = -1, worst_fbc = -1, best_num_samp = -1, worst_num_samp = 999;
+    for (int i=0; i<fbcount; ++i)
+    {
+        XVisualInfo *vi = glXGetVisualFromFBConfig( display, fbc[i] );
+        if ( vi )
+        {
+        int samp_buf, samples;
+        glXGetFBConfigAttrib( display, fbc[i], GLX_SAMPLE_BUFFERS, &samp_buf );
+        glXGetFBConfigAttrib( display, fbc[i], GLX_SAMPLES       , &samples  );
+        
+        if ( best_fbc < 0 || samp_buf && samples > best_num_samp )
+            best_fbc = i, best_num_samp = samples;
+        if ( worst_fbc < 0 || !samp_buf || samples < worst_num_samp )
+            worst_fbc = i, worst_num_samp = samples;
+        }
+        XFree( vi );
+    }
+
+    GLXFBConfig bestFbc = fbc[ best_fbc ];
+
+    // Be sure to free the FBConfig list allocated by glXChooseFBConfig()
+    XFree( fbc );
+
+    // Get a visual
+    XVisualInfo *vi = glXGetVisualFromFBConfig( display, bestFbc );
+
+    XSetWindowAttributes swa;
+    Colormap cmap;
+    swa.colormap = cmap = XCreateColormap( display,
+                                            RootWindow( display, vi->screen ), 
+                                            vi->visual, AllocNone );
+    swa.background_pixmap = None ;
+    swa.border_pixel      = 0;
+    swa.event_mask        = StructureNotifyMask;
+
+    Window win = XCreateWindow( display, RootWindow( display, vi->screen ), 
+                                0, 0, width, height, 0, vi->depth, InputOutput, 
+                                vi->visual, 
+                                CWBorderPixel|CWColormap|CWEventMask, &swa );
+    if ( !win )
+    {
+        app_fatal_error( app, "Failed to create window.\n" );
+    }
+
+    // Done with the visual info data
+    XFree( vi );
+
+    XStoreName( display, win, __progname );
+
+    // Get the default screen's GLX extension list
+    const char *glxExts = glXQueryExtensionsString( display,
+                                                    DefaultScreen( display ) );
+    // NOTE: It is not necessary to create or make current to a context before
+    // calling glXGetProcAddressARB
+    glXCreateContextAttribsARBProc glXCreateContextAttribsARB = 0;
+    glXCreateContextAttribsARB = (glXCreateContextAttribsARBProc)
+            glXGetProcAddressARB( (const GLubyte *) "glXCreateContextAttribsARB" );
+
+    GLXContext ctx = 0;
+
+    // Install an X error handler so the application won't exit if GL 3.0
+    // context allocation fails.
+    //
+    // Note this error handler is global.  All display connections in all threads
+    // of a process use the same error handler, so be sure to guard against other
+    // threads issuing X commands while this code is running.
+    ctxErrorOccurred = false;
+    int (*oldHandler)(Display*, XErrorEvent*) =
+        XSetErrorHandler(&ctxErrorHandler);
+
+    // Check for the GLX_ARB_create_context extension string and the function.
+    // If either is not present, use GLX 1.3 context creation method.
+    if ( !isExtensionSupported( glxExts, "GLX_ARB_create_context" ) ||
+        !glXCreateContextAttribsARB )
+    {
+     //   printf( "glXCreateContextAttribsARB() not found ... using old-style GLX context\n" );
+        ctx = glXCreateNewContext( display, bestFbc, GLX_RGBA_TYPE, 0, True );
+    }
+
+    // If it does, try to get a GL 3.0 context!
+    else
+    {
+        int context_attribs[] =
+        {
+            GLX_CONTEXT_MAJOR_VERSION_ARB, 3,
+            GLX_CONTEXT_MINOR_VERSION_ARB, 2,
+            //GLX_CONTEXT_FLAGS_ARB        , GLX_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB,
+            None
+        };
+
+        ctx = glXCreateContextAttribsARB( display, bestFbc, 0,
+                                        True, context_attribs );
+
+        // Sync to ensure any errors generated are processed.
+        XSync( display, False );
+        if ( ctxErrorOccurred || ctx == NULL )
+        {
+            // Couldn't create GL 3.0 context.  Fall back to old-style 2.x context.
+            // When a context version below 3.0 is requested, implementations will
+            // return the newest context version compatible with OpenGL versions less
+            // than version 3.0.
+            // GLX_CONTEXT_MAJOR_VERSION_ARB = 1
+            context_attribs[1] = 1;
+            // GLX_CONTEXT_MINOR_VERSION_ARB = 0
+            context_attribs[3] = 0;
+
+            ctxErrorOccurred = false;
+
+        //    printf( "Failed to create GL 3.0 context ... using old-style GLX context\n" );
+            ctx = glXCreateContextAttribsARB( display, bestFbc, 0, 
+                                                True, context_attribs );
+        }
+    }
+
+    // Sync to ensure any errors generated are processed.
+    XSync( display, False );
+
+    // attempt to enable vsync
+    glXSwapIntervalProc glXSwapInterval = NULL;
+    if(isExtensionSupported(glxExts, "GLX_EXT_swap_control"))
+    {
+        glXSwapInterval = (glXSwapIntervalProc)glXGetProcAddressARB("glXSwapIntervalEXT");
+    }
+    else if(isExtensionSupported(glxExts, "GLX_MESA_swap_control"))
+    {
+        glXSwapInterval = (glXSwapIntervalProc)glXGetProcAddressARB("glXSwapIntervalMESA");
+    }
+
+    if(glXSwapInterval != NULL)
+    {
+        glXSwapInterval(1);
+    }
+
+
+    // Restore the original error handler
+    XSetErrorHandler( oldHandler );
+
+    if ( ctxErrorOccurred || !ctx )
+    {
+        app_fatal_error( app, "Failed to create an OpenGL context\n" );
+    }
+
+    glXMakeCurrent( display, win, ctx );
+
+    Atom wmDeleteMessage = XInternAtom(display, "WM_DELETE_WINDOW", False);
+    XSetWMProtocols(display, win, &wmDeleteMessage, 1); 
+
+    XSelectInput(display, win,  ButtonPressMask | ButtonReleaseMask |
+                                KeyPressMask | KeyReleaseMask |
+                                ButtonMotionMask | PointerMotionMask |
+                                StructureNotifyMask );
+
+    app->display = display;
+    app->window = win;
+    app->glContext = ctx;
+    app->colMap = cmap;
+}
+
+void app_internal_x11_handle_events(app_t* app)
+{
+    Atom wmDeleteMessage = XInternAtom(app->display, "WM_DELETE_WINDOW", False);
+    XSetWMProtocols(app->display, app->window, &wmDeleteMessage, 1);
+
+    while(XPending(app->display))
+    {
+        XEvent event;
+        XNextEvent(app->display, &event);
+        
+        switch(event.type)
+        {
+            case KeyPress:
+            case KeyRelease:
+                {
+                    XKeyEvent ev = event.xkey;
+                    bool isUp = ev.type == KeyRelease;
+                    int key_code = ev.keycode;
+                    char key_str[4];
+                    KeySym key_sym;
+                    XLookupString(&ev, key_str, 4, &key_sym, NULL);
+                    app_internal_x11_add_key_event(app, key_code, key_str[0], isUp);
+                }
+                break;
+            case MotionNotify:
+                {
+                    int x = event.xmotion.x;
+                    int y = event.xmotion.y;
+
+                    app_internal_x11_add_mouse_move_event(app, x,y);
+                }
+                break;
+            case ButtonPress:
+                {
+                    int button = event.xbutton.button;
+                    app_internal_x11_add_mouse_press_event(app, button-1, false, false);
+                }
+                break;
+            case ButtonRelease:
+                {
+                    int button = event.xbutton.button;
+                    app_internal_x11_add_mouse_press_event(app, button-1, true, false);
+                }
+                break;
+            case ConfigureNotify:
+                {                   
+                    if(app->screenmode == APP_SCREENMODE_WINDOW)
+                    {
+                        XConfigureEvent ev = event.xconfigure;
+                        app->windowed_w = ev.width;
+                        app->windowed_h = ev.height;
+                        app->windowed_x = ev.x;
+                        app->windowed_y = ev.y;
+                        app_internal_opengl_resize( &app->gl, app->windowed_w, app->windowed_h );
+                    }
+                }
+                break;
+            case ClientMessage:
+                {
+                    if(event.xclient.data.l[0] == wmDeleteMessage)
+                    { 
+                        app->closed = true;
+                    }
+                }
+                break;
+            default:
+                break;
+        }
+    }
+}
+
+static void app_internal_linux_audio_output_cb(snd_async_handler_t *ahandler)
+{
+    snd_pcm_t *alsa_handle = snd_async_handler_get_pcm(ahandler);
+    app_t* app = snd_async_handler_get_callback_private(ahandler);
+
+    short* buffer = (short*)app->audio_buffer;
+    int read_pos = app->audio_buffer_position;
+    int buf_end = app->audio_buffer_size;
+
+    snd_pcm_sframes_t avail;
+    int err;
+    
+    avail = snd_pcm_avail_update(alsa_handle);
+
+//    printf("Audio: %llu\n", avail);
+
+//    while(avail > (app->audio_buffer_size / 4))
+    {
+        snd_pcm_sframes_t num_frames = buf_end - read_pos;
+        if(num_frames > avail)
+            num_frames = avail;
+
+        err = snd_pcm_writei(alsa_handle, &buffer[read_pos*2], num_frames);
+        if (err < 0) 
+        {
+            printf("Write error: %s\n", snd_strerror(err));
+            return;
+        }
+        if (err != num_frames) {
+            printf("Write error: written %i expected %li\n", err, num_frames);
+            return;
+        }
+
+        read_pos += num_frames;
+        if(read_pos == buf_end)
+            read_pos = 0;
+
+        avail = snd_pcm_avail_update(alsa_handle);
+    }
+
+    app->audio_buffer_position = read_pos;
+}
+
+int app_internal_linux_audio_init(app_t* app)
+{
+    (void)app;
+
+    int err = 0;
+    const char* pcm_name = "plughw:0,0";
+
+    snd_pcm_t* alsa_handle;
+    snd_pcm_hw_params_t *hw_params;
+
+    if ((err = snd_pcm_open (&alsa_handle, pcm_name, SND_PCM_STREAM_PLAYBACK, 0)) < 0) 
+    {
+        app_log(app, APP_LOG_LEVEL_ERROR, snd_strerror (err));
+        app_fatal_error(app, "Error opening audio device\n");
+        return err;
+	}
+
+    unsigned int sample_rate = 44100;
+    snd_pcm_hw_params_malloc (&hw_params);
+    snd_pcm_hw_params_any (alsa_handle, hw_params);
+    snd_pcm_hw_params_set_access (alsa_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
+    snd_pcm_hw_params_set_format (alsa_handle, hw_params, SND_PCM_FORMAT_S16_LE);
+    snd_pcm_hw_params_set_rate_near (alsa_handle, hw_params, &sample_rate, 0);
+    snd_pcm_hw_params_set_channels (alsa_handle, hw_params, 2);
+
+/*    if ((err = snd_pcm_hw_params_set_buffer_size (alsa_handle, hw_params, 4096)) < 0) {
+        app_log(app, snd_strerror (err));
+        app_fatal_error(app, "Error settting audio buffer\n");
+        return err;
+    } */
+
+    if ((err = snd_pcm_hw_params (alsa_handle, hw_params)) < 0) {
+        app_log(app, APP_LOG_LEVEL_ERROR, snd_strerror (err));
+        app_fatal_error(app, "Error setting audio parameters\n");
+        return err;
+    }
+
+    snd_async_handler_t *ahandler;
+    snd_async_add_pcm_handler(&ahandler, alsa_handle, app_internal_linux_audio_output_cb, app);
+
+    if ((err = snd_pcm_prepare (alsa_handle)) < 0) {
+        app_log(app, APP_LOG_LEVEL_ERROR, snd_strerror (err));
+        app_fatal_error(app, "Error preparing audio interface\n");
+        return err;
+    }
+
+    app->alsa_handle = alsa_handle;
+    app->alsa_hw_params = hw_params;
+
+    return err;
+}
+
+void app_internal_linux_audio_shutdown(app_t* app)
+{
+    snd_pcm_hw_params_free( app->alsa_hw_params );
+
+    snd_pcm_close (app->alsa_handle);
+}
+
+int app_run( int (*app_proc)( app_t*, void* ), void* user_data, void* memctx, void* logctx, void* fatalctx )
+{ 
+    int result = 0xff;
+
+    app_t* app = (app_t*) APP_MALLOC( memctx, sizeof( app_t ) );
+    memset( app, 0, sizeof( *app ) );
+    app->memctx = memctx;
+    app->logctx = logctx;
+    app->fatalctx = fatalctx;
+    app->interpolation = APP_INTERPOLATION_LINEAR;
+    app->screenmode = APP_SCREENMODE_FULLSCREEN;
+
+    // Log start message
+    char msg[ 64 ];
+    time_t t = time( NULL );
+    struct tm* start = localtime( &t );
+    sprintf( msg, "Application started %02d:%02d:%02d %04d-%02d-%02d.",
+            start->tm_hour, start->tm_min, start->tm_sec, start->tm_year + 1900, start->tm_mon + 1, start->tm_mday );
+    app_log( app, APP_LOG_LEVEL_INFO, msg );
+
+    Display *display = XOpenDisplay(NULL);
+    app->display_count = ScreenCount(display);
+    if( app->display_count <= 0 ) { app_log( app, APP_LOG_LEVEL_ERROR, "Failed to get display info" ); goto init_failed;  }
+
+    for(int i=0; i<app->display_count; ++i)
+    {
+        app->displays[i].x = app->displays[i].y = 0;
+        app->displays[i].width = XDisplayWidth(display, i);
+        app->displays[i].height = XDisplayHeight(display, i);
+
+        // not quite sure what to use as the id. for now just use the screen index.
+        snprintf(app->displays[i].id, 16, "%d", i);
+    }
+    
+    // Setup the main application window
+    int default_display = XDefaultScreen(display);
+    app->windowed_w = app->displays[ default_display ].width - app->displays[ default_display ].width / 6;
+    app->windowed_h = app->displays[ default_display ].height - app->displays[ default_display ].height / 6;
+    app->windowed_x = ( app->displays[ default_display ].width - app->windowed_w ) /  2;
+    app->windowed_y = ( app->displays[ default_display ].height - app->windowed_h ) / 2;
+    
+    app->fullscreen_width = app->displays[ default_display ].width;
+    app->fullscreen_height = app->displays[ default_display ].height;
+
+    app_internal_x11_view_init(app, app->windowed_w, app->windowed_h);
+
+
+//    app->has_focus = true;
+//    app->is_minimized = false;
+    app->initialized = false;
+   
+    // Bind opengl functions
+    app->gl.glCreateShader = ( APP_GLuint (APP_GLCALLTYPE*) (APP_GLenum) ) (uintptr_t) glXGetProcAddressARB( "glCreateShader" );
+    app->gl.glShaderSource = ( void (APP_GLCALLTYPE*) (APP_GLuint, APP_GLsizei, APP_GLchar const* const*, APP_GLint const*) ) (uintptr_t) glXGetProcAddressARB( "glShaderSource" );
+    app->gl.glCompileShader = ( void (APP_GLCALLTYPE*) (APP_GLuint) ) (uintptr_t) glXGetProcAddressARB( "glCompileShader" );
+    app->gl.glGetShaderiv = ( void (APP_GLCALLTYPE*) (APP_GLuint, APP_GLenum, APP_GLint*) ) (uintptr_t) glXGetProcAddressARB( "glGetShaderiv" );
+    app->gl.glCreateProgram = ( APP_GLuint (APP_GLCALLTYPE*) (void) ) (uintptr_t) glXGetProcAddressARB( "glCreateProgram" );
+    app->gl.glAttachShader = ( void (APP_GLCALLTYPE*) (APP_GLuint, APP_GLuint) ) (uintptr_t) glXGetProcAddressARB( "glAttachShader" );
+    app->gl.glBindAttribLocation = ( void (APP_GLCALLTYPE*) (APP_GLuint, APP_GLuint, APP_GLchar const*) ) (uintptr_t) glXGetProcAddressARB( "glBindAttribLocation" );
+    app->gl.glLinkProgram = ( void (APP_GLCALLTYPE*) (APP_GLuint) ) (uintptr_t) glXGetProcAddressARB( "glLinkProgram" );
+    app->gl.glGetProgramiv = ( void (APP_GLCALLTYPE*) (APP_GLuint, APP_GLenum, APP_GLint*) ) (uintptr_t) glXGetProcAddressARB( "glGetProgramiv" );
+    app->gl.glGenBuffers = ( void (APP_GLCALLTYPE*) (APP_GLsizei, APP_GLuint*) ) (uintptr_t) glXGetProcAddressARB( "glGenBuffers" );
+    app->gl.glBindBuffer = ( void (APP_GLCALLTYPE*) (APP_GLenum, APP_GLuint) ) (uintptr_t) glXGetProcAddressARB( "glBindBuffer" );
+    app->gl.glEnableVertexAttribArray = ( void (APP_GLCALLTYPE*) (APP_GLuint) ) (uintptr_t) glXGetProcAddressARB( "glEnableVertexAttribArray" );
+    app->gl.glVertexAttribPointer = ( void (APP_GLCALLTYPE*) (APP_GLuint, APP_GLint, APP_GLenum, APP_GLboolean, APP_GLsizei, void const*) ) (uintptr_t) glXGetProcAddressARB( "glVertexAttribPointer" );
+    app->gl.glGenVertexArrays = (void (APP_GLCALLTYPE*) (APP_GLsizei, APP_GLuint*) ) (uintptr_t) glXGetProcAddressARB( "glGenVertexArrays" );
+    app->gl.glBindVertexArray = (void (APP_GLCALLTYPE*) (APP_GLuint) ) (uintptr_t) glXGetProcAddressARB( "glBindVertexArray" );
+    app->gl.glGenTextures = ( void (APP_GLCALLTYPE*) (APP_GLsizei, APP_GLuint*) ) (uintptr_t) glXGetProcAddressARB( "glGenTextures" );
+    app->gl.glEnable = ( void (APP_GLCALLTYPE*) (APP_GLenum) ) (uintptr_t) glXGetProcAddressARB( "glEnable" );
+    app->gl.glActiveTexture = ( void (APP_GLCALLTYPE*) (APP_GLenum) ) (uintptr_t) glXGetProcAddressARB( "glActiveTexture" );
+    app->gl.glBindTexture = ( void (APP_GLCALLTYPE*) (APP_GLenum, APP_GLuint) ) (uintptr_t) glXGetProcAddressARB( "glBindTexture" );
+    app->gl.glTexParameteri = ( void (APP_GLCALLTYPE*) (APP_GLenum, APP_GLenum, APP_GLint) ) (uintptr_t) glXGetProcAddressARB( "glTexParameteri" );
+    app->gl.glDeleteBuffers = ( void (APP_GLCALLTYPE*) (APP_GLsizei, APP_GLuint const*) ) (uintptr_t) glXGetProcAddressARB( "glDeleteBuffers" );
+    app->gl.glDeleteTextures = ( void (APP_GLCALLTYPE*) (APP_GLsizei, APP_GLuint const*) ) (uintptr_t) glXGetProcAddressARB( "glDeleteTextures" );
+    app->gl.glBufferData = ( void (APP_GLCALLTYPE*) (APP_GLenum, APP_GLsizeiptr, void const *, APP_GLenum) ) (uintptr_t) glXGetProcAddressARB( "glBufferData" );
+    app->gl.glUseProgram = ( void (APP_GLCALLTYPE*) (APP_GLuint) ) (uintptr_t) glXGetProcAddressARB( "glUseProgram" );
+    app->gl.glUniform1i = ( void (APP_GLCALLTYPE*) (APP_GLint, APP_GLint) ) (uintptr_t) glXGetProcAddressARB( "glUniform1i" );
+    app->gl.glUniform3f = ( void (APP_GLCALLTYPE*) (APP_GLint, APP_GLfloat, APP_GLfloat, APP_GLfloat) ) (uintptr_t) glXGetProcAddressARB( "glUniform3f" );
+    app->gl.glGetUniformLocation = ( APP_GLint (APP_GLCALLTYPE*) (APP_GLuint, APP_GLchar const*) ) (uintptr_t) glXGetProcAddressARB( "glGetUniformLocation" );
+    app->gl.glTexImage2D = ( void (APP_GLCALLTYPE*) (APP_GLenum, APP_GLint, APP_GLint, APP_GLsizei, APP_GLsizei, APP_GLint, APP_GLenum, APP_GLenum, void const*) ) (uintptr_t) glXGetProcAddressARB( "glTexImage2D" );
+    app->gl.glClearColor = ( void (APP_GLCALLTYPE*) (APP_GLfloat, APP_GLfloat, APP_GLfloat, APP_GLfloat) ) (uintptr_t) glXGetProcAddressARB( "glClearColor" );
+    app->gl.glClear = ( void (APP_GLCALLTYPE*) (APP_GLbitfield) ) (uintptr_t) glXGetProcAddressARB( "glClear" );
+    app->gl.glDrawArrays = ( void (APP_GLCALLTYPE*) (APP_GLenum, APP_GLint, APP_GLsizei) ) (uintptr_t) glXGetProcAddressARB( "glDrawArrays" );
+    app->gl.glViewport = ( void (APP_GLCALLTYPE*) (APP_GLint, APP_GLint, APP_GLsizei, APP_GLsizei) ) (uintptr_t) glXGetProcAddressARB( "glViewport" );
+    app->gl.glDeleteShader = ( void (APP_GLCALLTYPE*) (APP_GLuint) ) (uintptr_t) glXGetProcAddressARB( "glDeleteShader" );
+    app->gl.glDeleteProgram = ( void (APP_GLCALLTYPE*) (APP_GLuint) ) (uintptr_t) glXGetProcAddressARB( "glDeleteProgram" );
+#ifdef APP_REPORT_SHADER_ERRORS
+    app->gl.glGetShaderInfoLog = ( void (APP_GLCALLTYPE*) (APP_GLuint, APP_GLsizei, APP_GLsizei*, APP_GLchar*) ) (uintptr_t) glXGetProcAddressARB( "glGetShaderInfoLog" );
+#endif
+
+    // Platform independent OpenGL initialization
+    int width = app->screenmode == APP_SCREENMODE_FULLSCREEN ? app->fullscreen_width : app->windowed_w;
+    int height = app->screenmode == APP_SCREENMODE_FULLSCREEN ? app->fullscreen_height: app->windowed_h;
+    if( !app_internal_opengl_init( app, &app->gl, app->interpolation, width, height ) )
+    {
+        app_log( app, APP_LOG_LEVEL_ERROR, "Failed to initialize OpenGL" );
+        goto init_failed;
+    }
+    
+    app_internal_opengl_resize( &app->gl, width, height );
+    app_internal_linux_audio_init(app);
+    
+    result = app_proc( app, user_data ); 
+
+init_failed:
+    if( !app_internal_opengl_term( &app->gl ) ) app_log( app, APP_LOG_LEVEL_WARNING, "Failed to terminate OpenGL" );
+    app_internal_linux_audio_shutdown(app);
+
+    t = time( NULL );
+    struct tm* end = localtime( &t );
+    sprintf( msg, "Application terminated %02d:%02d:%02d %04d-%02d-%02d.",
+            end->tm_hour, end->tm_min, end->tm_sec, end->tm_year + 1900, end->tm_mon + 1, end->tm_mday );
+    app_log( app, APP_LOG_LEVEL_INFO, msg );
+    
+    APP_FREE( memctx, app );
+    return result;
+}
+
+app_state_t app_yield( app_t* app ) 
+{
+    if( !app->initialized )
+    {
+        if( app->screenmode == APP_SCREENMODE_WINDOW )
+        {
+            app->screenmode = APP_SCREENMODE_FULLSCREEN;
+            app_screenmode( app, APP_SCREENMODE_WINDOW );
+        }
+        else
+        {
+            app->screenmode = APP_SCREENMODE_WINDOW;
+            app_screenmode( app, APP_SCREENMODE_FULLSCREEN );
+        }
+
+        XMapWindow( app->display, app->window );
+
+        app->initialized = true;
+    }
+    
+    app_internal_x11_handle_events(app);
+    
+    return app->closed ? APP_STATE_EXIT_REQUESTED : APP_STATE_NORMAL;
+}
+
+void app_cancel_exit( app_t* app ) 
+{
+    app->closed = false;
+}
+
+void app_title( app_t* app, char const* title ) 
+{
+    XStoreName( app->display, app->window, title );
+}
+
+char const* app_cmdline( app_t* app )
+{
+    APP_LOG(app, APP_LOG_LEVEL_INFO, "app_cmdline not implemented for linux yet\n");
+    return 0;
+}
+
+char const* app_filename( app_t* app )
+{
+    APP_LOG(app, APP_LOG_LEVEL_INFO, "app_filename not implemented for linux yet\n");
+    return 0;
+}
+
+char const* app_userdata( app_t* app )
+{
+    APP_LOG(app, APP_LOG_LEVEL_INFO, "app_userdata not implemented for linux yet\n");
+    return 0;
+}
+
+char const* app_appdata( app_t* app )
+{
+    APP_LOG(app, APP_LOG_LEVEL_INFO, "app_appdata not implemented for linux yet\n");
+    return 0;
+}
+
+APP_U64 app_time_count( app_t* app )
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000000000 + ts.tv_nsec;
+}
+
+APP_U64 app_time_freq( app_t* app ) 
+{ 
+    // time count is in nanoseconds.
+    return 1000000000;
+}
+
+void app_log( app_t* app, app_log_level_t level, char const* message )
+{
+    APP_LOG( app->logctx, level, message );
+}
+
+void app_fatal_error( app_t* app, char const* message )
+{
+    APP_FATAL_ERROR( app->fatalctx, message );
+}
+
+void app_pointer( app_t* app, int width, int height, APP_U32* pixels_abgr, int hotspot_x, int hotspot_y )
+{
+    APP_LOG(app, APP_LOG_LEVEL_INFO, "app_pointer not implemented for linux yet\n");
+}
+
+void app_pointer_default( app_t* app, int* width, int* height, APP_U32* pixels_abgr, int* hotspot_x, int* hotspot_y )
+{
+    APP_LOG(app, APP_LOG_LEVEL_INFO, "app_pointer_default not implemented for linux yet\n");
+}
+
+void app_pointer_pos( app_t* app, int x, int y )
+{
+    APP_LOG(app, APP_LOG_LEVEL_INFO, "app_pointer_pos not implemented for linux yet\n");
+}
+
+void app_pointer_limit( app_t* app, int x, int y, int width, int height )
+{
+    APP_LOG(app, APP_LOG_LEVEL_INFO, "app_pointer_limit not implemented for linux yet\n");
+}
+
+void app_pointer_limit_off( app_t* app )
+{
+    APP_LOG(app, APP_LOG_LEVEL_INFO, "app_pointer_limit_off not implemented for linux yet\n");
+}
+
+void app_interpolation( app_t* app, app_interpolation_t interpolation )
+{
+    if( interpolation == app->interpolation ) return;
+    app->interpolation = interpolation;
+    
+/*    POINT p;
+    GetCursorPos( &p );
+    ScreenToClient( app->hwnd, &p );
+    int mouse_x = p.x;
+    int mouse_y = p.y;
+    
+    app_input_event_t input_event;
+    input_event.type = APP_INPUT_MOUSE_MOVE;
+    input_event.data.mouse_pos.x = mouse_x;
+    input_event.data.mouse_pos.y = mouse_y;
+    app_internal_add_input_event( app, &input_event );
+ */
+    
+    app_internal_opengl_interpolation( &app->gl, interpolation );
+}
+
+void app_internal_x11_set_fullscreen(app_t* app, bool fullscreen)
+{
+    XEvent event = (XEvent) {0};
+    event.type = ClientMessage;
+    event.xclient.window = app->window;
+    event.xclient.format = 32; // Data is 32-bit longs
+    event.xclient.message_type = XInternAtom(app->display, "_NET_WM_STATE", False);
+    event.xclient.data.l[0] = fullscreen ? 1 : 0;
+    event.xclient.data.l[1] = XInternAtom(app->display, "_NET_WM_STATE_FULLSCREEN", False);
+    event.xclient.data.l[2] = 0; // No secondary property
+    event.xclient.data.l[3] = 1; // Sender is a normal application
+
+    XSendEvent(app->display,
+               XDefaultRootWindow(app->display),
+               False,
+               SubstructureNotifyMask | SubstructureRedirectMask,
+               &event);
+}
+
+void app_screenmode( app_t* app, app_screenmode_t screenmode )
+{
+    if(app->screenmode == screenmode)
+        return;
+
+    app->screenmode = screenmode;
+    if(screenmode == APP_SCREENMODE_WINDOW)
+    {
+        app_internal_x11_set_fullscreen(app, false);
+        XResizeWindow(app->display, app->window, app->windowed_w, app->windowed_h);
+        app_internal_opengl_resize( &app->gl, app->windowed_w, app->windowed_h );
+    }
+    else if(screenmode == APP_SCREENMODE_FULLSCREEN)
+    {
+        app_internal_x11_set_fullscreen(app, true);
+        app_internal_opengl_resize( &app->gl, app->fullscreen_width, app->fullscreen_height );
+    }
+}
+
+void app_window_size( app_t* app, int width, int height )
+{
+    app->windowed_w = width;
+    app->windowed_h = height;
+    if(app->screenmode == APP_SCREENMODE_WINDOW)
+    {
+        XResizeWindow(app->display, app->window, width, height);
+        app_internal_opengl_resize( &app->gl, width, height );
+    }
+}
+
+int app_window_width( app_t* app )
+{
+    return app->windowed_w;
+}
+
+int app_window_height( app_t* app )
+{
+    return app->windowed_h;
+}
+
+void app_window_pos( app_t* app, int x, int y )
+{
+    app->windowed_x = x;
+    app->windowed_y = y;
+    XMoveWindow(app->display, app->window, x,y);
+}
+
+int app_window_x( app_t* app )
+{
+    return app->windowed_x;
+}
+
+int app_window_y( app_t* app )
+{
+    return app->windowed_y;
+}
+
+app_displays_t app_displays( app_t* app )
+{
+    app_displays_t displays;
+    displays.count = app->display_count;
+    displays.displays = app->displays;
+    return displays;
+}
+
+void app_present( app_t* app, APP_U32 const* pixels_xbgr, int width, int height, APP_U32 mod_xbgr, APP_U32 border_xbgr ) 
+{ 
+    if( pixels_xbgr != NULL ) 
+        app_internal_opengl_present( &app->gl, pixels_xbgr, width, height, mod_xbgr, border_xbgr );
+    glXSwapBuffers ( app->display, app->window );
+}
+
+void app_sound_buffer_size( app_t* app, int sample_pairs_count ) 
+{
+    if(app->audio_buffer != NULL)
+    {
+        APP_FREE(app->memctx, app->audio_buffer);
+    }
+
+    if(sample_pairs_count > 0)
+    {
+        app->audio_buffer_size = sample_pairs_count;
+        app->audio_buffer_position = 0;
+        app->audio_buffer = APP_MALLOC(app->memctx, sample_pairs_count * 2 * sizeof(short));
+        memset(app->audio_buffer, 0x00, sample_pairs_count * 2 * sizeof(short));
+        
+        snd_pcm_prepare (app->alsa_handle);
+        
+        unsigned int avail = snd_pcm_avail_update(app->alsa_handle);
+        if(avail > sample_pairs_count)
+            avail = sample_pairs_count;
+        snd_pcm_writei(app->alsa_handle, app->audio_buffer, avail);
+    }
+    else
+    {
+        snd_pcm_drop(app->alsa_handle);
+        app->audio_buffer_size = 0;
+        app->audio_buffer = NULL;
+    }
+}
+
+int app_sound_position( app_t* app ) 
+{
+    return app->audio_buffer_position;
+}
+
+void app_sound_write( app_t* app, int sample_pairs_offset, int sample_pairs_count, APP_S16 const* sample_pairs ) 
+{
+    if(app->audio_buffer == NULL)
+        return;
+    
+    snd_pcm_state_t alsa_state = snd_pcm_state(app->alsa_handle);
+    if(alsa_state != SND_PCM_STATE_PREPARED && alsa_state != SND_PCM_STATE_RUNNING)
+        snd_pcm_prepare (app->alsa_handle);
+
+    APP_S16* buffer = &app->audio_buffer[sample_pairs_offset * 2];
+    for(int i=0; i<sample_pairs_count * 2; ++i)
+    {
+        buffer[i] = sample_pairs[i];
+    }
+}
+
+void app_sound_volume( app_t* app, float volume ) 
+{
+    if(volume > 1.0f) volume = 1.0f;
+    if(volume < 0.0f) volume = 0.0f;
+    app->sound_vol = volume;
+}
+
+app_input_t app_input( app_t* app )
+{
+    app_input_t input;
+    input.events = app->input_events;
+    input.count = app->input_count;
+    app->input_count = 0;
+    return input;
+}
+
+void app_coordinates_window_to_bitmap( app_t* app, int width, int height, int* x, int* y )
+{
+    int window_width = ( app->screenmode == APP_SCREENMODE_FULLSCREEN ) ? app->fullscreen_width : app->windowed_w;
+    int window_height = ( app->screenmode == APP_SCREENMODE_FULLSCREEN ) ? app->fullscreen_height : app->windowed_h;
+
+    if( app->interpolation == APP_INTERPOLATION_LINEAR )
+    {
+        float hscale = window_width / (float) width;
+        float vscale = window_height / (float) height;
+        float pixel_scale = hscale < vscale ? hscale : vscale;
+        if( pixel_scale > 0.0f )
+        {
+            float hborder = ( window_width - pixel_scale * width ) / 2.0f;
+            float vborder = ( window_height - pixel_scale * height ) / 2.0f;
+            *x -= (int)( hborder );
+            *y -= (int)( vborder );
+            *x = (int)( *x / pixel_scale );
+            *y = (int)( *y / pixel_scale );
+        }
+        else
+        {
+            *x = 0;
+            *y = 0;
+        }
+    }
+    else
+    {
+        int hscale = window_width / width;
+        int vscale = window_height / height;
+        int pixel_scale = pixel_scale = hscale < vscale ? hscale : vscale;
+        pixel_scale = pixel_scale < 1 ? 1 : pixel_scale;
+        int hborder = ( window_width - pixel_scale * width ) / 2;
+        int vborder = ( window_height - pixel_scale * height ) / 2;
+        *x -= (int)( hborder );
+        *y -= (int)( vborder );
+        *x = (int)( *x / pixel_scale );
+        *y = (int)( *y / pixel_scale );
+    }
+}
+
+
+void app_coordinates_bitmap_to_window( app_t* app, int width, int height, int* x, int* y )
+{
+    int window_width = ( app->screenmode == APP_SCREENMODE_FULLSCREEN ) ? app->fullscreen_width : app->windowed_w;
+    int window_height = ( app->screenmode == APP_SCREENMODE_FULLSCREEN ) ? app->fullscreen_height : app->windowed_h;
+
+    if( app->interpolation == APP_INTERPOLATION_LINEAR )
+    {
+        float hscale = window_width / (float) width;
+        float vscale = window_height / (float) height;
+        float pixel_scale = hscale < vscale ? hscale : vscale;
+        if( pixel_scale > 0.0f )
+        {
+            float hborder = ( window_width - pixel_scale * width ) / 2.0f;
+            float vborder = ( window_height - pixel_scale * height ) / 2.0f;
+            *x = (int)( *x * pixel_scale );
+            *y = (int)( *y * pixel_scale );
+            *x += (int)( hborder );
+            *y += (int)( vborder );
+        }
+        else
+        {
+            *x = 0;
+            *y = 0;
+        }
+    }
+    else
+    {
+        int hscale = window_width / width;
+        int vscale = window_height / height;
+        int pixel_scale = pixel_scale = hscale < vscale ? hscale : vscale;
+        pixel_scale = pixel_scale < 1 ? 1 : pixel_scale;
+        int hborder = ( window_width - pixel_scale * width ) / 2;
+        int vborder = ( window_height - pixel_scale * height ) / 2;
+        *x = (int)( *x * pixel_scale );
+        *y = (int)( *y * pixel_scale );
+        *x += (int)( hborder );
+        *y += (int)( vborder );
+    }
+}
+
+#else
+#error Undefined platform. Define APP_WINDOWS, APP_MACOS, APP_LINUX_X11 or APP_NULL.
 #endif
 
 
