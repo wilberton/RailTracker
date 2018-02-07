@@ -912,7 +912,7 @@ static int app_internal_opengl_init( app_t* app, struct app_internal_opengl_t* g
     // choose which shaders to use based on gl major version.
     char const* vs_source;
     char const* fs_source;
-    const char* versionStr = glGetString(GL_VERSION);
+    const GLubyte* versionStr = glGetString(GL_VERSION);
     switch(versionStr[0])
     {
         case '2':
