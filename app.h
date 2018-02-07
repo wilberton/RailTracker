@@ -4328,6 +4328,8 @@ struct app_t
 
     bool initialized;
     bool closed;
+    bool has_focus;
+    bool is_minimized;
 
     Display* display;
     Window window;
@@ -4363,21 +4365,79 @@ struct app_t
 typedef GLXContext (*glXCreateContextAttribsARBProc)(Display*, GLXFBConfig, GLXContext, Bool, const int*);
 typedef void(*glXSwapIntervalProc)(unsigned int);
 
+static app_key_t app_internal_x11_map_key(KeySym keyCode, char keyChar)
+{
+    if(keyCode >= XK_0 && keyCode <= XK_9)
+        return APP_KEY_0 + (keyCode - XK_0);
+    if(keyCode >= XK_KP_0 && keyCode <= XK_KP_9)
+        return APP_KEY_NUMPAD0 + (keyCode - XK_KP_0);
+    if(keyCode >= XK_a && keyCode <= XK_z)
+        return APP_KEY_A + (keyCode - XK_a);
+    if(keyCode >= XK_A && keyCode <= XK_Z)
+        return APP_KEY_A + (keyCode - XK_A);
+    if(keyCode >= XK_F1 && keyCode <= XK_F24)
+        return APP_KEY_F1 + (keyCode - XK_F1);
+
+    switch(keyCode)
+    {
+        case XK_BackSpace:
+            return APP_KEY_BACK;
+        case XK_Tab:
+            return APP_KEY_TAB;
+        case XK_Clear:
+            return APP_KEY_CLEAR;
+        case XK_Return:
+            return APP_KEY_RETURN;
+        case XK_Shift_L:
+        case XK_Shift_R:
+            return APP_KEY_SHIFT;
+        case XK_Control_L:
+        case XK_Control_R:
+            return APP_KEY_CONTROL;
+        case XK_Escape:
+            return APP_KEY_ESCAPE;
+        case XK_space:
+        case XK_KP_Space:
+            return APP_KEY_SPACE;
+        case XK_End:
+            return APP_KEY_END;
+        case XK_Home:
+            return APP_KEY_HOME;
+        case XK_Left:
+            return APP_KEY_LEFT;
+        case XK_Right:
+            return APP_KEY_RIGHT;
+        case XK_Up:
+            return APP_KEY_UP;
+        case XK_Down:
+            return APP_KEY_DOWN;
+        case XK_Insert:
+            return APP_KEY_INSERT;
+        case XK_Delete:
+            return APP_KEY_DELETE;
+        case XK_Help:
+            return APP_KEY_HELP;
+        default:
+            break;
+    }
+    
+    return APP_KEY_INVALID;
+}
 
 static void app_internal_add_input_event( app_t* app, app_input_event_t* event )
 {
-//    if( app->has_focus )
+    if( app->has_focus )
     {
         if( app->input_count < sizeof( app->input_events ) / sizeof( *app->input_events ) )
             app->input_events[ app->input_count++ ] = *event;
     }
 }
 
-void app_internal_x11_add_key_event(app_t* app, int keyCode, char keyChar, bool isUp)
+void app_internal_x11_add_key_event(app_t* app, KeySym keyCode, char keyChar, bool isUp)
 {
     app_input_event_t event;
     event.type = isUp ? APP_INPUT_KEY_UP : APP_INPUT_KEY_DOWN;
-    event.data.key = 0;//app_internal_osx_map_key(keyCode, keyChar);
+    event.data.key = app_internal_x11_map_key(keyCode, keyChar);
     app_internal_add_input_event(app, &event);
     
     if(!isUp)
@@ -4680,11 +4740,10 @@ void app_internal_x11_handle_events(app_t* app)
                 {
                     XKeyEvent ev = event.xkey;
                     bool isUp = ev.type == KeyRelease;
-                    int key_code = ev.keycode;
                     char key_str[4];
                     KeySym key_sym;
                     XLookupString(&ev, key_str, 4, &key_sym, NULL);
-                    app_internal_x11_add_key_event(app, key_code, key_str[0], isUp);
+                    app_internal_x11_add_key_event(app, key_sym, key_str[0], isUp);
                 }
                 break;
             case MotionNotify:
@@ -4882,9 +4941,8 @@ int app_run( int (*app_proc)( app_t*, void* ), void* user_data, void* memctx, vo
 
     app_internal_x11_view_init(app, app->windowed_w, app->windowed_h);
 
-
-//    app->has_focus = true;
-//    app->is_minimized = false;
+    app->has_focus = true;
+    app->is_minimized = false;
     app->initialized = false;
    
     // Bind opengl functions
